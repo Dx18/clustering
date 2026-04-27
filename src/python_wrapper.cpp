@@ -177,7 +177,21 @@ PYBIND11_MODULE(klcluster,m){
             .def("mapToBase",&CurveClusterer::mapSimplificationToBase)
             .def("getSimplifications",[](CurveClusterer& cc){return cc.simplifiedCurves;})
             .def("getCurves",[](CurveClusterer& cc){return cc.unsimplifiedCurves;})
-            .def("getTimes", [](CurveClusterer& cc){return cc.getTimes();})
+            .def("getTimes", [](CurveClusterer& cc){
+                const std::vector<std::vector<int>>& times = cc.getTimes();
+
+                auto result = py::list();
+
+                for (const std::vector<int>& curr_times : times){
+                    result.append(py::array_t<int>(py::buffer_info(
+                        curr_times.data(),
+                        static_cast<ssize_t>(curr_times.size()),
+                        true
+                    )));
+                }
+
+                return result;
+            })
             .def("getSimplifiedGTs",[](CurveClusterer& cc){return cc.simplifiedGTs;})
             .def("test",&CurveClusterer::test)
             .def("mergeOverlappingClusters",&CurveClusterer::mergeOverlappingClusters)
