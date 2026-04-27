@@ -119,6 +119,8 @@ public:
     double getSimpDelta() const{return simplificationDelta;};
     double getFreeDelta() const{return freespaceDelta;};
 
+    const std::vector<std::vector<int>>& getTimes() const{return times;}
+
     //TODO: make these accessible in a better way, for filters...
     Curves simplifiedCurves;
     Curves unsimplifiedCurves;

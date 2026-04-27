@@ -177,6 +177,7 @@ PYBIND11_MODULE(klcluster,m){
             .def("mapToBase",&CurveClusterer::mapSimplificationToBase)
             .def("getSimplifications",[](CurveClusterer& cc){return cc.simplifiedCurves;})
             .def("getCurves",[](CurveClusterer& cc){return cc.unsimplifiedCurves;})
+            .def("getTimes", [](CurveClusterer& cc){return cc.getTimes();})
             .def("getSimplifiedGTs",[](CurveClusterer& cc){return cc.simplifiedGTs;})
             .def("test",&CurveClusterer::test)
             .def("mergeOverlappingClusters",&CurveClusterer::mergeOverlappingClusters)
