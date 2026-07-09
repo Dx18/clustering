@@ -9,6 +9,23 @@ namespace py = pybind11;
 
 auto trivialFilter = [](const Candidate &c){return true;};
 
+template <typename T>
+class Ptr {
+public:
+    Ptr(T *ptr) : ptr_(ptr) {}
+
+    const T* get() const { return ptr_; }
+    T* get() { return ptr_; }
+
+    const T& operator->() const { return *ptr_; }
+    T& operator->() { return *ptr_; }
+
+private:
+    T* ptr_{nullptr};
+};
+
+PYBIND11_DECLARE_HOLDER_TYPE(T, Ptr<T>, true);
+
 PYBIND11_MODULE(klcluster,m){
 
     m.def("TRIVIALFILTER",trivialFilter);
@@ -124,6 +141,7 @@ PYBIND11_MODULE(klcluster,m){
             ;
 
     py::class_<CPoint>(m,"CPoint")
+            .def(py::init<int, double>())
             .def_property_readonly("value",&CPoint::convert);
 
     py::class_<CInterval>(m,"CInterval")
@@ -136,6 +154,7 @@ PYBIND11_MODULE(klcluster,m){
             .def_property_readonly("__len__",&Cluster::size)
             .def("center",&Cluster::getCenter)
             .def("__iter__",[](Cluster &c){return py::make_iterator(c.getMatching().begin(),c.getMatching().end());},py::keep_alive<0,1>())
+            .def("visualMatching",[](Cluster &c){return py::make_iterator(c.getVisualMatching().begin(), c.getVisualMatching().end());}, py::keep_alive<0, 1>())
             .def("__getitem__", &Cluster::operator[], py::return_value_policy::reference)
             .def("values",&Cluster::as_ndarray);
 
@@ -168,6 +187,29 @@ PYBIND11_MODULE(klcluster,m){
             .def("__iter__",[](std::vector<ParamLabeling> &c){return py::make_iterator(c.begin(),c.end());},py::keep_alive<0,1>())
             .def("__getitem__",[](std::vector<ParamLabeling>& pls, int i){return pls[i];});
 
+    py::class_<CPosition>(m,"CPosition")
+            .def(py::init<CPoint, CPoint>())
+            .def_property_readonly("x",[](const CPosition& point){return point[0];})
+            .def_property_readonly("y",[](const CPosition& point){return point[1];});
+
+    py::class_<CPositions>(m,"CPositions")
+            .def(py::init<>())
+            .def("__iter__",[](CPositions& positions){return py::make_iterator(positions);},py::keep_alive<0,1>());
+
+    py::class_<SparseFreespace, Ptr<SparseFreespace>>(m,"SparseFreespace")
+            .def("getPath",[](SparseFreespace& fs,CPoint TStart,CPoint BStart,CPoint TEnd,CPoint BEnd){return fs.getPath(TStart, BStart, TEnd, BEnd);});
+
+    py::class_<SparseFreeSpaces, Ptr<SparseFreeSpaces>>(m,"SparseFreespaces")
+        .def("getFreespace", [](SparseFreeSpaces& sfs,int BID,int TID)->Ptr<SparseFreespace>{
+                for (SparseFreespace& f : sfs[BID]) {
+                    if (f.TID == TID) {
+                        return &f;
+                    }
+                }
+
+                return nullptr;
+            }, py::return_value_policy::reference_internal);
+
     py::class_<CurveClusterer>(m,"CurveClusterer")
             .def(py::init<>())
             .def("initCurves",[](CurveClusterer& cc, Curves& cs, double delta){return cc.initCurves(cs,delta);})
@@ -193,13 +235,20 @@ PYBIND11_MODULE(klcluster,m){
                 return result;
             })
             .def("getSimplifiedGTs",[](CurveClusterer& cc){return cc.simplifiedGTs;})
+            .def("getFreespaces",[](CurveClusterer& cc)->Ptr<SparseFreeSpaces>{
+                if(cc.sparseFreespaces != nullptr){
+                    return cc.sparseFreespaces.get();
+                }
+
+                return nullptr;
+            }, py::return_value_policy::reference_internal)
             .def("test",&CurveClusterer::test)
             .def("mergeOverlappingClusters",&CurveClusterer::mergeOverlappingClusters)
             .def("greedyIndependent",[](CurveClusterer& cc, int l,bool withShow = false){return cc.greedyIndependent(l,trivialFilter,withShow);})
             .def("greedyCover",[](CurveClusterer& cc, int l, int rounds,bool withShow = false){return cc.greedyCover(l,rounds,trivialFilter,withShow);})
             .def("greedyCoverAgressiveFilter",[](CurveClusterer& cc, int l, int rounds){return cc.greedyCover(l,rounds,
 
-                                                                                                              [=](const Candidate &a) {
+                                                                                                              [&cc, l, rounds](const Candidate &a) {
                                                                                                                   bool withIsTrivial = true;
                                                                                                                   bool withIsDown = true;
                                                                                                                   bool istrivial = l == 1;

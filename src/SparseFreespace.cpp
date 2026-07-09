@@ -496,6 +496,240 @@ void SparseFreespace::identifyEnds() {
     std::sort(downEnds.begin(),downEnds.end());
 }
 
+SparseGridCell<std::unique_ptr<Cell>>* SparseFreespace::searchCell(PointID y, PointID x) {
+    std::vector<SparseGridCell<std::unique_ptr<Cell>>>& searchRow = row(y);
+
+    // Technically, we can use binary search
+
+    int xIdx = 0;
+    while (xIdx < searchRow.size() && searchRow[xIdx].x < x) {
+        xIdx++;
+    }
+
+    if (xIdx == searchRow.size() || searchRow[xIdx].x > x) {
+        return nullptr;
+    }
+
+    SparseGridCell<std::unique_ptr<Cell>>& result = searchRow[xIdx];
+
+    assert(result.x == x);
+    assert(result.y == y);
+
+    return &result;
+}
+
+CPositions SparseFreespace::getPath(CPoint TStart, CPoint BStart, CPoint TEnd, CPoint BEnd) {
+    // Ensure that we search from left to right (and remember whether we swapped the points)
+    bool reversePath = false;
+    if (TStart > TEnd) {
+        std::swap(TStart, TEnd);
+        std::swap(BStart, BEnd);
+        reversePath = true;
+    }
+
+    bool movingDown = BEnd < BStart;
+
+    // Find start and end cells and ensure that these contain the given points
+
+    SparseGridCell<std::unique_ptr<Cell>>* startCell = searchCell(BStart.getPoint(), TStart.getPoint());
+    if (startCell == nullptr || !startCell->data->contains(CellPoint(TStart.getFraction(), BStart.getFraction()))) {
+        return {};
+    }
+
+    SparseGridCell<std::unique_ptr<Cell>>* endCell = searchCell(BEnd.getPoint(), TEnd.getPoint());
+    if (endCell == nullptr || !endCell->data->contains(CellPoint(TEnd.getFraction(), BEnd.getFraction()))) {
+        return {};
+    }
+
+    // If both points lie in the same cell, return a trivial path
+    if (startCell == endCell) {
+        CPositions result = {{TStart, BStart}, {TEnd, BEnd}};
+
+        if (reversePath) {
+            std::reverse(result.begin(), result.end());
+        }
+
+        return result;
+    }
+
+    // Do the search
+
+    std::vector<SparseGridCell<std::unique_ptr<Cell>>*> resetList;
+    resetList.push_back(startCell);
+    std::deque<SparseGridCell<std::unique_ptr<Cell>>*> nextList;
+
+    bool initialIteration = true;
+    bool foundPath = false;
+
+    while(initialIteration || !nextList.empty()) {
+        Interval fromLeft;
+        Interval fromBelowOrAbove;
+        SparseGridCell<std::unique_ptr<Cell>>* cur = nullptr;
+        if (initialIteration) {
+            cur = startCell;
+
+            fromLeft = movingDown ? Interval(0.0, BStart.getFraction()) : Interval(BStart.getFraction(), 1.0);
+            fromBelowOrAbove = {TStart.getFraction(), 1.0};
+        } else {
+            cur = nextList.front();
+            nextList.pop_front();
+
+            fromLeft = cur->leftId != -1 ? cell(cur->y, cur->leftId)->data->toRight() : Interval();
+            fromBelowOrAbove = movingDown
+                ? (cur->upId != -1 ? cell(cur->y + 1, cur->upId)->data->toBottom() : Interval())
+                : (cur->downId != -1 ? cell(cur->y - 1, cur->downId)->data->toAbove() : Interval());
+        }
+
+        Interval toRight = movingDown ? Interval(0.0, fromLeft.end) : Interval(fromLeft.begin, 1.0);
+        Interval toAboveOrBelow = {fromBelowOrAbove.begin, 1.0};
+
+        //update toRight and toAbove/toBottom for later iterations
+        assert(!(fromBelowOrAbove.is_empty() && fromLeft.is_empty()));
+        if (initialIteration) {
+            cur->data->toRight() = cur->data->right.intersect(toRight);
+            if (movingDown) {
+                cur->data->toBottom() = cur->data->bottom.intersect(fromBelowOrAbove);
+            } else {
+                cur->data->toAbove() = cur->data->top.intersect(fromBelowOrAbove);
+            }
+        } else {
+            cur->data->toRight() = fromBelowOrAbove.is_empty() ? cur->data->right.intersect(toRight) : cur->data->right;
+            if (movingDown) {
+                cur->data->toBottom() = fromLeft.is_empty() ? cur->data->bottom.intersect(toAboveOrBelow) : cur->data->bottom;
+            } else {
+                cur->data->toAbove() = fromLeft.is_empty() ? cur->data->top.intersect(toAboveOrBelow) : cur->data->top;
+            }
+        }
+
+        if (movingDown) {
+            if (cur->downId != -1 && !cur->data->toBottom().is_empty() && cur->y > BEnd.getPoint()) {
+                nextList.push_back(cell(cur->y - 1, cur->downId));
+                resetList.push_back(cell(cur->y - 1, cur->downId));
+            }
+        } else {
+            if (cur->upId != -1 && !cur->data->toAbove().is_empty() && cur->y < BEnd.getPoint()) {
+                nextList.push_back(cell(cur->y + 1, cur->upId));
+                resetList.push_back(cell(cur->y + 1, cur->upId));
+            }
+        }
+
+        if (cur->rightId != -1 && !cur->data->toRight().is_empty() //has something to the right to propagate to
+            && cur->rightId <= TEnd.getPoint() //the end point does not lie to the left of the next cell
+            && (nextList.empty() || nextList.front() != cell(cur->y, cur->rightId)))  //and the next entry in the nextList is not already the upcoming cell
+        {
+            nextList.push_front(cell(cur->y, cur->rightId));
+            resetList.push_back(cell(cur->y, cur->rightId));
+        }
+
+        if (cur == endCell) {
+            // We already know that startCell and endCell are not the same cell
+            assert(!initialIteration);
+
+            if (toRight.contains(BEnd.getFraction()) || toAboveOrBelow.contains(TEnd.getFraction())) {
+                foundPath = true;
+                break;
+            }
+        }
+
+        initialIteration = false;
+    }
+
+    CPositions result;
+
+    if (foundPath) {
+        result.push_back({TEnd, BEnd});
+
+        SparseGridCell<std::unique_ptr<Cell>>* curr = endCell;
+        double currX = result.back()[0].getFraction();
+        double currY = result.back()[1].getFraction();
+
+        while (curr != startCell) {
+            SparseGridCell<std::unique_ptr<Cell>>* next = nullptr;
+
+            if (curr->leftId != -1) {
+                SparseGridCell<std::unique_ptr<Cell>>* leftCell = cell(curr->y, curr->leftId);
+
+                if (!leftCell->data->toRight().is_empty()) {
+                    bool couldComeFromLeft = false;
+                    if (movingDown && currY <= leftCell->data->toRight().end) {
+                        couldComeFromLeft = true;
+
+                        currY = leftCell->data->toRight().end;
+                    } else if (!movingDown && currY >= leftCell->data->toRight().begin) {
+                        couldComeFromLeft = true;
+
+                        currY = leftCell->data->toRight().begin;
+                    }
+
+                    if (couldComeFromLeft) {
+                        currX = 1.0;
+
+                        result.push_back({
+                            CPoint{curr->x, 0.0},
+                            CPoint{curr->y, currY},
+                        });
+
+                        curr = leftCell;
+
+                        continue;
+                    }
+                }
+            }
+
+            if (movingDown) {
+                assert(curr->upId != -1);
+                next = cell(curr->y + 1, curr->upId);
+
+                assert(!next->data->toBottom().is_empty());
+                assert(currX >= next->data->toBottom().begin);
+
+                currX = next->data->toBottom().begin;
+                currY = 0.0;
+
+                result.push_back({
+                    CPoint{curr->x, currX},
+                    CPoint{curr->y + 1, 0.0},
+                });
+            } else {
+                assert(curr->downId != -1);
+                next = cell(curr->y - 1, curr->downId);
+
+                assert(!next->data->toAbove().is_empty());
+                assert(currX >= next->data->toAbove().begin);
+
+                currX = next->data->toAbove().begin;
+                currY = 1.0;
+
+                result.push_back({
+                    CPoint{curr->x, currX},
+                    CPoint{curr->y, 0.0},
+                });
+            }
+
+            curr = next;
+        }
+
+        result.push_back({TStart, BStart});
+
+        if (!reversePath) {
+            // The recovered path is reversed by construction
+            std::reverse(result.begin(), result.end());
+        }
+    }
+
+    for(auto cell : resetList){
+        cell->data->toRight() = Interval();
+
+        if (movingDown) {
+            cell->data->toBottom() = Interval();
+        } else {
+            cell->data->toAbove() = Interval();
+        }
+    }
+
+    return result;
+}
+
 MinkowskiCell::MinkowskiCell(Point &a, Point &b, Point &c, Point &d, distance_t ra, distance_t rb, distance_t rc,
                              distance_t rd, int tc): Cell(tc),ra(ra),rb(rb),rc(rc),rd(rd){
     //acac,acab,accd,abab,abcd;

@@ -55,6 +55,17 @@ public:
         std::cout << "toAbove:" << toAbove(threadID) << std::endl;
         std::cout << "toRight:" << toRight(threadID) << std::endl;
     };
+
+    bool contains(CellPoint point) const {
+        if (point.y < bottomPair.first.y || point.y > topPair.first.y) {
+          return false;
+        }
+
+        double leftX = leftMostAt(point.y).x;
+        double rightX = rightMostAt(point.y).x;
+
+        return leftX <= point.x && point.x <= rightX;
+    }
 };
 
 class SparseCell : public Cell{
@@ -188,6 +199,10 @@ public:
     void identifyEnds();
     void identifyStartsAndEnds(){identifyStarts();/*identifyEnds();*/}
     //SparseFreespace(SparseFreespace& sf)=default;
+
+    SparseGridCell<std::unique_ptr<Cell>>* searchCell(PointID y, PointID x);
+
+    CPositions getPath(CPoint TStart, CPoint BStart, CPoint TEnd, CPoint BEnd);
 };
 
 

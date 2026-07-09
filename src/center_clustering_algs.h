@@ -12,19 +12,21 @@
 
 /*
 Clustering computeCenterClustering(
-	Curves const& curves, int k, int l, ClusterAlg cluster_alg, CenterAlg center_alg, int max_rounds = 10);
+        Curves const& curves, int k, int l, ClusterAlg cluster_alg, CenterAlg center_alg, int max_rounds = 10);
 
 Clustering approxCover(Curves& curves, double delta,int l,int max_rounds = 10);
 */
 
 class Cluster{
 public:
-    Cluster(CInterval c, CIntervals& m){
+  Cluster(CInterval c, CIntervals& m, CIntervals &vm){
         center = c;
         matching = m;
+        visualMatching = vm;
     }
     CInterval getCenter() const{return center;};
     CIntervals& getMatching(){return matching;};
+    CIntervals& getVisualMatching(){return visualMatching;}
     int size() const{return matching.size();};
     inline auto as_ndarray() const {
         py::list l;
@@ -59,6 +61,7 @@ public:
 private:
     CInterval center;
     CIntervals matching;
+    CIntervals visualMatching;
 };
 
 class ClusteringResult : public std::vector<Cluster>{
@@ -66,7 +69,7 @@ public:
     ClusteringResult(std::vector<Candidate>& cs){
         for(auto c:cs){
             CInterval center{c.getBegin(),c.getEnd(),c.getCurveIndex()};
-            emplace_back(center,c.matching);
+            emplace_back(center,c.matching,c.visualMatching);
         }
     }
     Cluster const& get(PointID i) const { return operator[](i); }
@@ -126,6 +129,7 @@ public:
     Curves unsimplifiedCurves;
     std::vector<ParamLabeling> simplifiedGTs;
     std::vector<int> simpIDtoOriginID;
+    std::unique_ptr<SparseFreeSpaces> sparseFreespaces;
 
     CurveClusterer(int samplingRate, bool showFlag) {
         updateFlags(samplingRate, showFlag);
@@ -477,6 +481,8 @@ public:
             }
         }
 
+        sparseFreespaces = std::make_unique<SparseFreeSpaces>(std::move(cs.sparsefreespaces));
+
         return result.size()-invalid;
 
     }
@@ -607,7 +613,7 @@ public:
                     for (auto & cov : covering){
                         std::cout << cov.getCurveIndex() << "   " << cov.getBegin().getPoint() << "," << cov.getBegin().getFraction() << "   " << cov.getEnd().getPoint() << "," << cov.getEnd().getFraction()<<std::endl;
                     }
-		    /*
+                    /*
                     //std::cout << "\nTrying to refine... ";
                     int deletecount = 0;
                     for (int igni = result.size() - 1; igni >= 0; --igni) {
@@ -641,7 +647,7 @@ public:
                             double importance = lengthOfUncovered(simplifiedCurves, temp);
                             result[igni].importance = importance;
                         }
-			*/
+                        */
                     //std::sort(result.begin(), result.end(), [](auto& a, auto& b){return a.second.importance > b.second.importance;});
                     std::cout << "\nSolution of size " << result.size() << " found. ";
                     if (bestResultVisualizer.empty() || bestResultVisualizer.size() > result.size()) {
@@ -733,9 +739,9 @@ public:
             if(!lastRound){
                 std::cout << "Cleaning up for next round ... " << std::endl;
                 cs.reset();
-	    }
+            }
         }
-	std::cout << "Done";
+        std::cout << "Done";
         if (withSort) {
             std::sort(bestResultVisualizer.begin(), bestResultVisualizer.end(),
                       [](const Candidate &a, const Candidate &b) {
@@ -744,7 +750,7 @@ public:
                                   (a.matching[0].getBegin() < b.matching[0].getBegin()));
                       });
         }
-	std::cout << " and sorted";
+        std::cout << " and sorted";
         if (showFreespaces) {
 #ifdef HASVISUAL
             cs.showCovering(bestResultVisualizer);
@@ -752,6 +758,9 @@ public:
         }
         ClusteringResult cr(bestResultVisualizer);
         std::cout << "."<<std::endl;
+
+        sparseFreespaces = std::make_unique<SparseFreeSpaces>(std::move(cs.sparsefreespaces));
+
         return cr;
     }
 };
