@@ -1,12 +1,17 @@
 
 #include "FreespaceVisualizer.h"
 
+#ifdef HASVISUAL
+
 #include <opencv2/opencv.hpp>
 #include <opencv2/highgui.hpp>
 
 using std::cout;
 using std::endl;
 using namespace cv;
+
+#endif
+
 /*
 void FreeSpaceVisualizer::show(bool withPoints){
 
@@ -876,6 +881,7 @@ ClusteringVisulaizer::showClusteringStretched(Curves c, std::vector<std::vector<
 }
 */
 void SparseFreeSpacesVisualizer::show() {
+#ifdef HASVISUAL
 //this will be awful
     double CS = 32.0;
     while(CS/8.0 > 1.0/(double)(freespaces.size())){
@@ -1066,6 +1072,7 @@ void SparseFreeSpacesVisualizer::show() {
     cv::destroyAllWindows();
 
     cv::waitKey(1);
+#endif
 }
 /*
 void SparseFreeSpacesVisualizer::showCandidates(std::vector<Candidate> candidates) {
