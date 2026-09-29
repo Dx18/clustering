@@ -224,11 +224,11 @@ PYBIND11_MODULE(klcluster, m){
                 auto result = py::list();
 
                 for (const std::vector<int>& curr_times : times){
-                    result.append(py::array_t<int>(py::buffer_info(
-                        curr_times.data(),
-                        static_cast<ssize_t>(curr_times.size()),
-                        true
-                    )));
+                    py::array_t<int> curr_times_array(curr_times.size());
+
+                    std::ranges::copy(curr_times, curr_times_array.mutable_data());
+
+                    result.append(std::move(curr_times_array));
                 }
 
                 return result;
