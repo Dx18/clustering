@@ -7,7 +7,7 @@
 
 namespace py = pybind11;
 
-auto trivialFilter = [](const Candidate &c){return true;};
+auto trivialFilter = [](const CandidateBase &c){ return true; };
 
 template <typename T>
 class Ptr {
@@ -26,8 +26,7 @@ private:
 
 PYBIND11_DECLARE_HOLDER_TYPE(T, Ptr<T>, true);
 
-PYBIND11_MODULE(klcluster,m){
-
+PYBIND11_MODULE(klcluster, m){
     m.def("TRIVIALFILTER",trivialFilter);
 
     py::class_<Point>(m, "Point")
@@ -244,11 +243,11 @@ PYBIND11_MODULE(klcluster,m){
             }, py::return_value_policy::reference_internal)
             .def("test",&CurveClusterer::test)
             .def("mergeOverlappingClusters",&CurveClusterer::mergeOverlappingClusters)
-            .def("greedyIndependent",[](CurveClusterer& cc, int l,bool withShow = false){return cc.greedyIndependent(l,trivialFilter,withShow);})
-            .def("greedyCover",[](CurveClusterer& cc, int l, int rounds,bool withShow = false){return cc.greedyCover(l,rounds,trivialFilter,withShow);})
-            .def("greedyCoverAgressiveFilter",[](CurveClusterer& cc, int l, int rounds){return cc.greedyCover(l,rounds,
+            .def("greedyIndependent",[](CurveClusterer& cc, int l,bool withShow = false){return cc.greedyIndependentArcLength(l,trivialFilter,withShow);})
+            .def("greedyCover",[](CurveClusterer& cc, int l, int rounds,bool withShow = false){return cc.greedyCoverArcLength(l,rounds,trivialFilter,withShow);})
+            .def("greedyCoverAgressiveFilter",[](CurveClusterer& cc, int l, int rounds){return cc.greedyCoverArcLength(l,rounds,
 
-                                                                                                              [&cc, l, rounds](const Candidate &a) {
+                                                                                                              [&cc, l, rounds](const CandidateBase &a) {
                                                                                                                   bool withIsTrivial = true;
                                                                                                                   bool withIsDown = true;
                                                                                                                   bool istrivial = l == 1;

@@ -9,6 +9,7 @@
 #include "SWatch.h"
 #include "FreespaceVisualizer.h"
 #include <algorithm>
+#include <ranges>
 
 /*
 Clustering computeCenterClustering(
@@ -19,7 +20,7 @@ Clustering approxCover(Curves& curves, double delta,int l,int max_rounds = 10);
 
 class Cluster{
 public:
-  Cluster(CInterval c, CIntervals& m, CIntervals &vm){
+    Cluster(CInterval c, const CIntervals& m, const CIntervals &vm){
         center = c;
         matching = m;
         visualMatching = vm;
@@ -66,27 +67,54 @@ private:
 
 class ClusteringResult : public std::vector<Cluster>{
 public:
-    ClusteringResult(std::vector<Candidate>& cs){
-        for(auto c:cs){
-            CInterval center{c.getBegin(),c.getEnd(),c.getCurveIndex()};
-            emplace_back(center,c.matching,c.visualMatching);
+    template<std::ranges::input_range R>
+    requires(std::convertible_to<std::iter_reference_t<std::ranges::iterator_t<R>>, const CandidateBase&>)
+    explicit ClusteringResult(R&& candidates) {
+        for (const CandidateBase& c : candidates) {
+            CInterval center{c.getBegin(), c.getEnd(), c.getCurveIndex()};
+            emplace_back(center, c.matching, c.visualMatching);
         }
     }
+
     Cluster const& get(PointID i) const { return operator[](i); }
     int len(){return (*this).size();}
 };
 
 Curves greedyCoverAlreadySimplified(Curves &curves, double delta, int l, int max_rounds = 10, bool show = false);
 
-void
-updateCandidate(Curves &curves, Candidate &c, std::vector<CInterval> covering, const std::vector<double> &suffixLengths,
-                int roundID);
-
-double lengthOfUncovered(Curves curves, std::vector<Candidate> candidateSet);
-
-std::pair<int,CPoint> uncoveredPoint(Curves &curves, std::vector<Candidate> &candidateSet,std::pair<int,CPoint> min = {0,{0,0}});
-
 bool cmpLeftLower(CInterval l, CInterval r);
+
+template<std::ranges::input_range R>
+requires(std::convertible_to<std::iter_reference_t<std::ranges::iterator_t<R>>, const CandidateBase&>)
+std::vector<CInterval> getCandidateSetMatching(R&& candidateSet) {
+    std::vector<CInterval> presorted;
+    for (const CandidateBase& c : candidateSet) {
+        presorted.insert(presorted.end(), c.matching.begin(), c.matching.end());
+    }
+    std::sort(presorted.begin(), presorted.end(), cmpLeftLower);
+
+    return presorted;
+}
+
+double lengthOfUncoveredByIntervals(const Curves& curves, const std::vector<CInterval>& presorted);
+
+template<std::ranges::input_range R>
+requires(std::convertible_to<std::iter_reference_t<std::ranges::iterator_t<R>>, const CandidateBase&>)
+double lengthOfUncovered(const Curves& curves, R&& candidateSet) {
+    std::vector<CInterval> presorted = getCandidateSetMatching(std::forward<R>(candidateSet));
+
+    return lengthOfUncoveredByIntervals(curves, presorted);
+}
+
+std::pair<int, CPoint> uncoveredPointByIntervals(const Curves &curves, const std::vector<CInterval>& presorted, std::pair<int, CPoint> min = {0,{0,0}});
+
+template<std::ranges::input_range R>
+requires(std::convertible_to<std::iter_reference_t<std::ranges::iterator_t<R>>, const CandidateBase&>)
+std::pair<int, CPoint> uncoveredPoint(const Curves& curves, R&& candidateSet, std::pair<int, CPoint> min = {0,{0,0}}) {
+    std::vector<CInterval> presorted = getCandidateSetMatching(std::forward<R>(candidateSet));
+
+    return uncoveredPointByIntervals(curves, presorted, min);
+}
 
 //template<typename func> Curves greedyCover(Curves& curves, double delta, int l, );
 
@@ -140,7 +168,7 @@ public:
     };
 
     //TODO: this seems wrong
-    CPoint mapSimplificationToBase(int curveIdx, CPoint q) {
+    CPoint mapSimplificationToBase(int curveIdx, CPoint q) const {
         auto x = std::lower_bound(vertexMaps[curveIdx].begin(),vertexMaps[curveIdx].end(),q);
         int i = x - vertexMaps[curveIdx].begin();
 
@@ -439,21 +467,26 @@ public:
     }
 
     template <typename func>
-    int greedyIndependent(int l, func filter, bool withShow=false){
-        CandidateSetPQ cs = CandidateSetPQ(simplifiedCurves, freespaceDelta);
-        cs.ultrafastComputeSmall(l, filter);
+    int greedyIndependentArcLength(int l, func filter, bool withShow=false){
+        return greedyIndependent<ArcLengthCandidateCost>(l, filter, ArcLengthCandidateCost::InitContext{.curves = simplifiedCurves}, withShow);
+    }
+
+    template <typename C, typename func>
+    int greedyIndependent(int l, func filter, const C::InitContext& costInitContext, bool withShow=false){
+        CandidateSetPQ<C> cs(simplifiedCurves, freespaceDelta);
+        cs.ultrafastComputeSmall(l, filter, costInitContext);
 
         if (withShow){
             SparseFreeSpacesVisualizer sfsv(cs.sparsefreespaces);
             sfsv.show();
         }
 
-        std::vector<Candidate*> candidateset;
+        std::vector<Candidate<C>*> candidateset;
         for (auto & c : cs.getUnsafeCandidates()) {
             candidateset.push_back(&c);
         }
 
-        std::vector<Candidate> covering;
+        std::vector<Candidate<C>> covering;
         std::vector<std::pair<int,CPoint>> result;
         int invalid = 0;
         std::pair<int,CPoint> pcur = {0,{0,0}};
@@ -488,47 +521,40 @@ public:
     }
 
     template<typename func>
-    ClusteringResult greedyCover(int l, int rounds, func filter,bool withShow=false, long long* size = nullptr) {
+    ClusteringResult greedyCoverArcLength(int l, int rounds, func filter,bool withShow=false, long long* size = nullptr) {
+        return greedyCover<ArcLengthCandidateCost>(
+                l, rounds, filter, ArcLengthCandidateCost::InitContext{.curves = simplifiedCurves}, withShow, size);
+    }
 
-        //std::cout << "complexity: " << simplifiedCurves[9].size() << std::endl;
-        //std::cout << "vertexMapEntry: " << vertexMaps.size() << std::endl;
-        //for (auto v : vertexMaps[9]) {
-        //    std::cout << v.getPoint() << v.getFraction() << std::endl;
-        //}
-
+    template<typename C, typename func>
+    ClusteringResult greedyCover(int l, int rounds, func filter, const C::InitContext& costInitContext, bool withShow = false, long long* size = nullptr) {
         assert(not simplifiedCurves.empty());
 
-        //Curves curves;
-        //Curves bestresult;
-        std::vector<Candidate> bestResultVisualizer;
-        CandidateSetPQ cs = CandidateSetPQ(simplifiedCurves, freespaceDelta);
-        if(withShow){
+        std::vector<Candidate<C>> bestResultVisualizer;
+        CandidateSetPQ<C> cs(simplifiedCurves, freespaceDelta);
+        if (withShow) {
             SparseFreeSpacesVisualizer sfsv(cs.sparsefreespaces);
             sfsv.show();
         }
-        //cs.computeCandidates(l);
-        cs.ultrafastComputeSmall(l, filter);
+        cs.ultrafastComputeSmall(l, filter, costInitContext);
 
-        if(size != nullptr){
+        typename C::UpdateContext costUpdateContext(costInitContext);
+
+        if (size != nullptr) {
             *size = 0;
-            while(not cs.empty()){
+            while (not cs.empty()) {
                 *size += cs.top()->matching.size();
                 cs.pop();
             }
             //*size = (int)(cs.size());
-            return bestResultVisualizer;
+            return ClusteringResult(bestResultVisualizer);
         }
 
-
-        //io::exportSubcurve("/Users/styx/data/curveclustering/results/bestcandidate.txt",curves[cs.top().first],cs.top().second.getStart(),cs.top().second.getEnd());
-
         for (int r = 0; r < rounds; ++r) {
-
             bool lastRound = r==rounds-1;
 
-            std::vector<Candidate> result;
+            std::vector<Candidate<C>> result;
             std::vector<CInterval> covering;
-            std::vector<double> suffixLengths;
 
             std::cout << "Round " << r<<std::endl;
 
@@ -540,59 +566,18 @@ public:
                 auto depth = 0;
 
 
-                std::pair<int,CPoint> pcur = uncoveredPoint(simplifiedCurves,result);
-                std::cout << "current coordinate: {" << pcur.first << " ,{"<<pcur.second.getPoint() << "," << pcur.second.getFraction()<<std::endl;
-
+                std::pair<int,CPoint> pcur = uncoveredPoint(simplifiedCurves, result);
+                std::cout << "current coordinate: {" << pcur.first << " ,{" << pcur.second.getPoint() << "," << pcur.second.getFraction() << std::endl;
 
                 //first verify that we need to find another center, otherwise output solution
-
                 if (lastInternalRound ||
                     lengthOfUncovered(simplifiedCurves, result) <= EPSILON) {
-                    //std::cout << "\nTrying to refine... ";
-                    int deletecount = 0;
-                    for (int igni = result.size() - 1; igni >= 0; --igni) {
-                        //i is the index to be ignored
-                        std::vector<Candidate> temp;
-                        for (int j = 0; j < result.size(); ++j) {
-                            if (igni != j) {
-                                temp.push_back(result[j]);
-                            }
-                        }
-                        double importance = lengthOfUncovered(simplifiedCurves, temp);
-                        if (importance <= EPSILON) {
-                            //std::cout << " ( " << igni << " , " << importance << " )";
-                            result.erase(result.begin() + igni);
-                            deletecount += 1;
-                        } else {
-                            result[igni].importance = importance;
-                        }
-                    }
-                    if (deletecount == 0)
-                        //std::cout << "nothing";
-                        //std::cout << " greedely deleted\n";
-                        for (int igni = result.size() - 1; igni >= 0; --igni) {
-                            //i is the index to be ignored
-                            std::vector<Candidate> temp;
-                            for (int j = 0; j < result.size(); ++j) {
-                                if (igni != j) {
-                                    temp.push_back(result[j]);
-                                }
-                            }
-                            double importance = lengthOfUncovered(simplifiedCurves, temp);
-                            result[igni].importance = importance;
-                        }
+                    tryRefineSolution(result);
+
                     //std::sort(result.begin(), result.end(), [](auto& a, auto& b){return a.second.importance > b.second.importance;});
-                    std::cout << "\nSolution of size " << result.size() << " found. ";
-                    if (bestResultVisualizer.empty() || bestResultVisualizer.size() > result.size()) {
-                        if (!bestResultVisualizer.empty()) {
-                            std::cout << "This improves on the current best by "
-                                      << bestResultVisualizer.size() - result.size() << "! ";
-                        }
-                        bestResultVisualizer.clear();
-                        for (const auto &sub: result) {
-                            bestResultVisualizer.push_back(sub);
-                        }
-                    }
+
+                    updateBestSolution(bestResultVisualizer, result);
+
                     break;
 
                 }
@@ -600,118 +585,54 @@ public:
                 //update top, until the roundID matches
                 while (!cs.empty() and cs.top()->roundOfUpdate != roundID) {
                     ID++;
-                    Candidate& c = *cs.top();
+                    Candidate<C>& c = *cs.top();
                     cs.pop();
-                    updateCandidate(simplifiedCurves, c, covering, suffixLengths, roundID);
+                    c.update(covering, costUpdateContext, roundID);
                     depth += 1;
-                    if (c.semiUpdatedCoverLength > EPSILON)
+                    if (c.getCost() > EPSILON)
                         cs.push(&c);
                 }
 
                 //if top index is too light, we also stop
-                if(cs.empty() or cs.top()->semiUpdatedCoverLength <= EPSILON){
-                    for (auto & cov : covering){
+                if (cs.empty() or cs.top()->getCost() <= EPSILON) {
+                    for (auto & cov : covering) {
                         std::cout << cov.getCurveIndex() << "   " << cov.getBegin().getPoint() << "," << cov.getBegin().getFraction() << "   " << cov.getEnd().getPoint() << "," << cov.getEnd().getFraction()<<std::endl;
                     }
-                    /*
-                    //std::cout << "\nTrying to refine... ";
-                    int deletecount = 0;
-                    for (int igni = result.size() - 1; igni >= 0; --igni) {
-                        //i is the index to be ignored
-                        std::vector<Candidate> temp;
-                        for (int j = 0; j < result.size(); ++j) {
-                            if (igni != j) {
-                                temp.push_back(result[j]);
-                            }
-                        }
-                        double importance = lengthOfUncovered(simplifiedCurves, temp);
-                        if (importance <= EPSILON) {
-                            //std::cout << " ( " << igni << " , " << importance << " )";
-                            result.erase(result.begin() + igni);
-                            deletecount += 1;
-                        } else {
-                            result[igni].importance = importance;
-                        }
-                    }
-                    if (deletecount == 0)
-                        //std::cout << "nothing";
-                        //std::cout << " greedely deleted\n";
-                        for (int igni = result.size() - 1; igni >= 0; --igni) {
-                            //i is the index to be ignored
-                            std::vector<Candidate> temp;
-                            for (int j = 0; j < result.size(); ++j) {
-                                if (igni != j) {
-                                    temp.push_back(result[j]);
-                                }
-                            }
-                            double importance = lengthOfUncovered(simplifiedCurves, temp);
-                            result[igni].importance = importance;
-                        }
-                        */
-                    //std::sort(result.begin(), result.end(), [](auto& a, auto& b){return a.second.importance > b.second.importance;});
-                    std::cout << "\nSolution of size " << result.size() << " found. ";
-                    if (bestResultVisualizer.empty() || bestResultVisualizer.size() > result.size()) {
-                        if (!bestResultVisualizer.empty()) {
-                            std::cout << "This improves on the current best by "
-                                      << bestResultVisualizer.size() - result.size() << "! ";
-                        }
-                        bestResultVisualizer.clear();
-                        for (const auto &sub: result) {
-                            bestResultVisualizer.push_back(sub);
-                        }
-                    }
-                    break;
 
+                    updateBestSolution(bestResultVisualizer, result);
+
+                    break;
                 }
 
                 //otherwise add top element to cs
 
-
-                //printFirst50(cs);
-
-                double addedweight;
-                //cs.showCovering(result);
-                //std::cout << cs.top().second.semiUpdatedCoverLength << " ";
-                //std::pair<int,Candidate> ctemp = cs.top();
-                //std::cout << cs.top().second.matchings.size();
-                //updateCandidate(curves, ctemp.second, covering, suffixLengths, roundID);
-
-
                 //cs.top() will be added to c
                 if (i == 0) {
-                    std::vector<Candidate> temp;
+                    std::vector<Candidate<C>> temp;
                     for (int j = 0; j < r; ++j) {
                         temp.push_back(*cs.top());
                         cs.pop();
                     }
-                    Candidate c = *cs.top();
+                    Candidate<C> c = *cs.top();
                     result.push_back(c);
 
                     cs.pop();
                 } else {
-                    Candidate c = *cs.top();
+                    Candidate<C> c = *cs.top();
                     result.push_back(c);
-
-                    //io::exportSubcurve("/Users/styx/data/curveclustering/results/bestcandidate.txt",curves[0],cs.top().getStart(),cs.top().second.getEnd());
-                    //cs.showCovering(result);
 
                     cs.pop();
                 }
 
                 std::cout << "\033[0G"<<"Identified center #"<<i<<" at depth " << depth << "     " <<  std::flush;
 
-                //std::cout << " added weight: " << addedweight << ". Updated " << ID << " lengths\n";
-
-
-                Candidate c = result.back();
+                Candidate<C> c = result.back();
 
                 //update covering
                 std::vector<CInterval> temp(covering);
                 temp.insert(temp.end(), c.matching.begin(), c.matching.end());
                 std::sort(temp.begin(), temp.end(), cmpLeftLower);
                 covering.clear();
-                suffixLengths.clear();
-                suffixLengths.push_back(0);
                 CInterval cur = temp[0];
                 for (int covI = 1; covI < temp.size(); covI++) {
                     CInterval next = temp[covI];
@@ -719,23 +640,14 @@ public:
                         cur.end = std::max(next.end, cur.end);
                     } else {
                         covering.push_back(cur);
-                        suffixLengths.push_back(
-                                suffixLengths.back() +
-                                simplifiedCurves[cur.getCurveIndex()].subcurve_length(cur.getBegin(), cur.end));
                         cur = next;
                     }
                 }
                 covering.push_back(cur);
-                suffixLengths.push_back(
-                        suffixLengths.back() +
-                        simplifiedCurves[cur.getCurveIndex()].subcurve_length(cur.getBegin(), cur.end));
-                //if((i+1)%100==0)
-                //cs.showCovering(result);
+
+                costUpdateContext.update(covering);
             }
             std::cout << std::endl;
-            //std::cout << " " << std::chrono::duration_cast<std::chrono::milliseconds>(swatchinsert.elapsed()).count() << std::endl;
-            //std::cout << " " << std::chrono::duration_cast<std::chrono::milliseconds>(swatchupdate.elapsed()).count() << std::endl;
-            //std::cout << "Cleaning up for next round ... ";
             if(!lastRound){
                 std::cout << "Cleaning up for next round ... " << std::endl;
                 cs.reset();
@@ -744,7 +656,7 @@ public:
         std::cout << "Done";
         if (withSort) {
             std::sort(bestResultVisualizer.begin(), bestResultVisualizer.end(),
-                      [](const Candidate &a, const Candidate &b) {
+                      [](const CandidateBase &a, const CandidateBase &b) {
                           return (a.matching[0].getCurveIndex() < b.matching[0].getCurveIndex()) ||
                                  ((a.matching[0].getCurveIndex() == b.matching[0].getCurveIndex()) &&
                                   (a.matching[0].getBegin() < b.matching[0].getBegin()));
@@ -753,7 +665,13 @@ public:
         std::cout << " and sorted";
         if (showFreespaces) {
 #ifdef HASVISUAL
-            cs.showCovering(bestResultVisualizer);
+            std::vector<CandidateBase> candidates;
+            for (const Candidate<C>& c : bestResultVisualizer) {
+                candidates.push_back(c);
+            }
+
+            SparseFreeSpacesVisualizer fsv(cs.sparsefreespaces);
+            fsv.showCandidates(std::move(candidates));
 #endif
         }
         ClusteringResult cr(bestResultVisualizer);
@@ -763,7 +681,80 @@ public:
 
         return cr;
     }
+
+private:
+    template<typename C>
+    void tryRefineSolution(std::vector<Candidate<C>>& result) {
+        //std::cout << "\nTrying to refine... ";
+        int deletecount = 0;
+        for (int igni = result.size() - 1; igni >= 0; --igni) {
+            //i is the index to be ignored
+            std::vector<Candidate<C>> temp;
+            for (int j = 0; j < result.size(); ++j) {
+                if (igni != j) {
+                    temp.push_back(result[j]);
+                }
+            }
+            double importance = lengthOfUncovered(simplifiedCurves, temp);
+            if (importance <= EPSILON) {
+                //std::cout << " ( " << igni << " , " << importance << " )";
+                result.erase(result.begin() + igni);
+                deletecount += 1;
+            } else {
+                // TODO Decide what to do with importance
+                // result[igni].importance = importance;
+            }
+        }
+
+        // TODO Make Sure this is not needed
+        // if (deletecount == 0)
+        //     //std::cout << "nothing";
+        //     //std::cout << " greedely deleted\n";
+        //     for (int igni = result.size() - 1; igni >= 0; --igni) {
+        //      //i is the index to be ignored
+        //      std::vector<Candidate<C>> temp;
+        //      for (int j = 0; j < result.size(); ++j) {
+        //          if (igni != j) {
+        //              temp.push_back(result[j]);
+        //          }
+        //      }
+        //      double importance = lengthOfUncovered(simplifiedCurves, temp.begin(), temp.end());
+        //      result[igni].importance = importance;
+        //     }
+    }
+
+    template<typename C>
+    void updateBestSolution(std::vector<Candidate<C>>& bestResultVisualizer,
+                            const std::vector<Candidate<C>>& result) {
+        std::cout << "\nSolution of size " << result.size() << " found. ";
+        if (bestResultVisualizer.empty() || bestResultVisualizer.size() > result.size()) {
+            if (!bestResultVisualizer.empty()) {
+                std::cout << "This improves on the current best by "
+                          << bestResultVisualizer.size() - result.size() << "! ";
+            }
+            bestResultVisualizer.clear();
+            for (const auto &sub: result) {
+                bestResultVisualizer.push_back(sub);
+            }
+        }
+    }
 };
+
+
+// template<typename C>
+// void printFirst50(CandidateSetPQ<C>& cs){
+//     std::vector<Candidate<C>*> temp;
+//     for(int i=0;i<5;++i){
+//         Candidate c = *cs.top();
+//         temp.push_back(cs.top());
+//         cs.pop();
+//         std::cout << "(" << c.roundOfUpdate << ";" << c.semiUpdatedCoverLength << ") ";
+//     }
+//     std::cout << "\n";
+//     for(Candidate<C>* c : temp)
+//         cs.push(c);
+// }
+
 /*
 template<typename func>
 std::vector<Candidate>

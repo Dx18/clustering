@@ -1,87 +1,11 @@
 
 #include "center_clustering_algs.h"
+
 bool cmpLeftLower(CInterval l, CInterval r){
     return (l.getCurveIndex() < r.getCurveIndex()) || (l.getCurveIndex() == r.getCurveIndex() && (l.getBegin() < r.getBegin()));
 }
 
-bool cmpLeftUpper(CInterval l, CInterval r){
-    return (l.getCurveIndex() < r.getCurveIndex()) || (l.getCurveIndex() == r.getCurveIndex() && (l.getBegin() < r.getEnd()));
-}
-
-bool cmpRightUpper(CInterval l, CInterval r){
-    return (l.getCurveIndex() < r.getCurveIndex()) || (l.getCurveIndex() == r.getCurveIndex() && (l.getEnd() < r.getEnd()));
-}
-//TODO: something here is fucked.
-void updateCandidate(Curves& curves, Candidate& c, std::vector<CInterval> covering, const std::vector<double>& suffixLengths, int roundID){
-    double newLength = 0;
-
-    for(auto matching : c.matching){
-
-        auto l = std::upper_bound(covering.begin(),covering.end(),matching,cmpLeftUpper);
-        int lIdx = l - covering.begin();
-        //lIdx points to the first interval that can lie right of s
-
-        auto r = std::upper_bound(covering.begin(),covering.end(),matching, cmpRightUpper);
-        int rIdx = r - covering.begin();
-        //rIdx points to the first interval that can lie right of t
-
-        bool leftContains = (l!=covering.end()) && (l->getCurveIndex() == matching.getCurveIndex()) && (l->contains(matching.getBegin()));
-        bool rightContains = (r!=covering.end()) && (r->getCurveIndex() == matching.getCurveIndex()) && (r->contains(matching.getEnd()));
-
-        if(leftContains && rightContains && lIdx == rIdx)
-            continue;
-
-        newLength += curves[matching.getCurveIndex()].subcurve_length(matching.getBegin(),matching.getEnd());
-
-        if(leftContains){
-            newLength -= curves[matching.getCurveIndex()].subcurve_length(matching.getBegin(),l->getEnd());
-            lIdx ++;
-        }
-        //now lIdx points to the first interval that lies strictly to the right of s
-
-        if(rightContains){
-            newLength -= curves[matching.getCurveIndex()].subcurve_length(r->getBegin(),matching.getEnd());
-            //rIdx --;
-        }
-        //now rIdx points to the last inerval that lies strictly to the left of t
-        if(rIdx > lIdx) {
-            newLength -= (suffixLengths[rIdx] - suffixLengths[lIdx]);
-        }
-    }
-    if (newLength < -EPSILON) {
-        std::cout << " ????? "<<std::endl;
-
-    }
-    if(c.semiUpdatedCoverLength + EPSILON < newLength){
-        std::cout << "  ???" << c.semiUpdatedCoverLength << " -> " << newLength <<" with error " << newLength - c.semiUpdatedCoverLength <<"???"<<std::endl;
-        //updateCandidate(curves,c,covering,suffixLengths,roundID);
-    }
-    c.semiUpdatedCoverLength = newLength;
-    c.roundOfUpdate = roundID;
-}
-
-void printFirst50(CandidateSetPQ& cs){
-    std::vector<Candidate*> temp;
-    for(int i=0;i<5;++i){
-        Candidate c = *cs.top();
-        temp.push_back(cs.top());
-        cs.pop();
-        std::cout << "(" << c.roundOfUpdate << ";" << c.semiUpdatedCoverLength << ") ";
-    }
-    std::cout << "\n";
-    for(Candidate* c : temp)
-        cs.push(c);
-}
-
-double lengthOfUncovered(Curves curves, std::vector<Candidate> candidateSet){
-    //step 1: merge
-    std::vector<CInterval> presorted;
-    for(auto c:candidateSet){
-        presorted.insert(presorted.end(),c.matching.begin(),c.matching.end());
-    }
-    std::sort(presorted.begin(), presorted.end(), cmpLeftLower);
-
-
+double lengthOfUncoveredByIntervals(const Curves& curves, const std::vector<CInterval>& presorted) {
     double uncovered = 0;
     std::pair<int, CPoint> pcur = {0, {0, 0}};
 
@@ -123,15 +47,7 @@ double lengthOfUncovered(Curves curves, std::vector<Candidate> candidateSet){
     return uncovered;
 }
 
-std::pair<int, CPoint> uncoveredPoint(Curves &curves, std::vector<Candidate> &candidateSet,std::pair<int,CPoint> min){
-    //step 1: merge
-    std::vector<CInterval> presorted;
-    for(auto c:candidateSet){
-        presorted.insert(presorted.end(),c.matching.begin(),c.matching.end());
-    }
-    std::sort(presorted.begin(), presorted.end(), cmpLeftLower);
-
-
+std::pair<int, CPoint> uncoveredPointByIntervals(const Curves &curves, const std::vector<CInterval>& presorted, std::pair<int, CPoint> min) {
     double uncovered = 0;
     std::pair<int, CPoint> pcur = min;
 
@@ -178,8 +94,9 @@ std::pair<int, CPoint> uncoveredPoint(Curves &curves, std::vector<Candidate> &ca
         pcur = {pcur.first+1,{0,0}};
     }
     return {-1,{0,0}};
-    //return uncovered;
 }
+
+
 /*
 Curves greedyCoverAlreadySimplified(Curves& curves, double delta, int l, int max_rounds, bool show){
     std::vector<Candidate> bestResultVisualizer = greedyCoverUnsanitizedOutput(curves,delta,l,max_rounds,show,[=](const Candidate& a){return a.getEnd().getPoint() >a.getBegin().getPoint() + l/4;});

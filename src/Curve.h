@@ -97,11 +97,11 @@ public:
         }
     }
 
-    double weight(int i){
+    double weight(int i) const {
         return weights[i];
     }
 
-    double maxWeight(){
+    double maxWeight() const {
         return maxW;
     }
 

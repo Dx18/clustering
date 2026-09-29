@@ -116,7 +116,7 @@ bool close_linesegments(const Point& p1, const Point& p2, const Point& q1, const
     return !intersection.is_empty();
 }
 
-SparseFreespace::SparseFreespace(Curve &B, Curve &T, distance_t delta, int threadcount, CurveID BID, CurveID TID):nx(T.size()-1),ny(B.size()-1),Parent(B.size()-1),BID(BID),TID(TID), delta(delta){
+SparseFreespace::SparseFreespace(const Curve& B, const Curve& T, distance_t delta, int threadcount, CurveID BID, CurveID TID):nx(T.size()-1),ny(B.size()-1),Parent(B.size()-1),BID(BID),TID(TID), delta(delta){
   //  int n = 0;
 #pragma omp parallel for default(none) shared(T,B,delta, threadcount,std::cout)
     for(int y=0;y<ny;y++){

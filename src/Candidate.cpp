@@ -3,17 +3,99 @@
 #include "Candidate.h"
 #include "FreespaceVisualizer.h"
 
-CandidateSetPQ::CandidateSetPQ(Curves &c, double d) : Parent(cmpPQ), curves(c), delta(d), sparsefreespaces(c,d,omp_get_max_threads()) {
-    //std::cout << "Computing Freespaces";
-    //int num_threads = omp_get_max_threads();
-    //sparsefreespaces()
-    //std::cout << " Done\n";
-    //FreeSpacesVisualizer fsv(freespaces);
-    //fsv.show();
+namespace {
+
+bool cmpLeftUpper(CInterval l, CInterval r){
+    return (l.getCurveIndex() < r.getCurveIndex()) || (l.getCurveIndex() == r.getCurveIndex() && (l.getBegin() < r.getEnd()));
+}
+
+bool cmpRightUpper(CInterval l, CInterval r){
+    return (l.getCurveIndex() < r.getCurveIndex()) || (l.getCurveIndex() == r.getCurveIndex() && (l.getEnd() < r.getEnd()));
+}
+    
+}
+
+ArcLengthCandidateCost::UpdateContext::UpdateContext(const InitContext& initContext) : curves(initContext.curves), suffixLengths({0.0}) {}
+
+void ArcLengthCandidateCost::UpdateContext::update(const std::vector<CInterval>& covering) {
+    suffixLengths.clear();
+    suffixLengths.push_back(0.0);
+
+    for (const CInterval& cur : covering) {
+        suffixLengths.push_back(
+                suffixLengths.back() +
+                curves[cur.getCurveIndex()].subcurve_length(cur.getBegin(), cur.getEnd()));
+    }
+}
+
+ArcLengthCandidateCost::ArcLengthCandidateCost(const InitContext& context, const CandidateBase& candidate) {
+    optimisticCoverLength = 0;
+
+    for (const CInterval& m : candidate.matching) {
+        optimisticCoverLength += context.curves[m.fixed_curve].subcurve_length(m.begin, m.end);
+    }
+
+    reset();
+}
+
+//TODO: something here is fucked.
+void ArcLengthCandidateCost::update(const std::vector<CInterval>& covering, const UpdateContext& context,
+                                    const CandidateBase& candidate) {
+    double newLength = 0;
+
+    for(auto matching : candidate.matching){
+
+        auto l = std::upper_bound(covering.begin(),covering.end(),matching,cmpLeftUpper);
+        int lIdx = l - covering.begin();
+        //lIdx points to the first interval that can lie right of s
+
+        auto r = std::upper_bound(covering.begin(),covering.end(),matching, cmpRightUpper);
+        int rIdx = r - covering.begin();
+        //rIdx points to the first interval that can lie right of t
+
+        bool leftContains = (l!=covering.end()) && (l->getCurveIndex() == matching.getCurveIndex()) && (l->contains(matching.getBegin()));
+        bool rightContains = (r!=covering.end()) && (r->getCurveIndex() == matching.getCurveIndex()) && (r->contains(matching.getEnd()));
+
+        if(leftContains && rightContains && lIdx == rIdx)
+            continue;
+
+        newLength += context.curves[matching.getCurveIndex()].subcurve_length(matching.getBegin(),matching.getEnd());
+
+        if(leftContains){
+            newLength -= context.curves[matching.getCurveIndex()].subcurve_length(matching.getBegin(),l->getEnd());
+            lIdx ++;
+        }
+        //now lIdx points to the first interval that lies strictly to the right of s
+
+        if(rightContains){
+            newLength -= context.curves[matching.getCurveIndex()].subcurve_length(r->getBegin(),matching.getEnd());
+            //rIdx --;
+        }
+        //now rIdx points to the last inerval that lies strictly to the left of t
+        if(rIdx > lIdx) {
+            newLength -= (context.suffixLengths[rIdx] - context.suffixLengths[lIdx]);
+        }
+    }
+    if (newLength < -EPSILON) {
+        std::cout << " ????? "<<std::endl;
+
+    }
+    if(semiUpdatedCoverLength + EPSILON < newLength){
+        std::cout << "  ???" << semiUpdatedCoverLength << " -> " << newLength <<" with error " << newLength - semiUpdatedCoverLength <<"???"<<std::endl;
+        //updateCandidate(curves,c,covering,suffixLengths,roundID);
+    }
+    semiUpdatedCoverLength = newLength;
+}
+
+void ArcLengthCandidateCost::reset() {
+    semiUpdatedCoverLength = optimisticCoverLength;
+}
+
+distance_t ArcLengthCandidateCost::getCost() const {
+    return semiUpdatedCoverLength;
 }
 
 CPoints propagateUpAndIntersect(SparseFreespace& sfs, int y, int x, distance_t startheight, const CPoints& ends, CurveID tIndex, int threadID=0){
-
     SparseGridCell<std::unique_ptr<Cell>>* startcell = sfs.cell(y,x);
 
     std::vector<SparseGridCell<std::unique_ptr<Cell>>*> resetList;
@@ -194,12 +276,12 @@ CPoints propagateDownAndIntersect(SparseFreespace& sfs, int y, int x, distance_t
     return result;
 }
 
-std::vector<Candidate> CandidateSetPQ::uncompressCandidate(CurveID bIndex, CPoint start, const CPoints& ends,int threadID) {
+std::vector<CandidateBase> uncompressCandidate(SparseFreeSpaces& sparsefreespaces, CurveID bIndex, CPoint start, const CPoints& ends,int threadID) {
     //for every (leftmost) intersection of that start in the freespace
     //      determine the maximal x-coordinate at every end-height simultaneously
     //      append this pair into the correct candidates visual matching
     std::vector<SparseFreespace>& fss = sparsefreespaces[bIndex];
-    std::vector<Candidate> result;
+    std::vector<CandidateBase> result;
     //initialize empty candidates
     for(auto end:ends){
         result.emplace_back(start,end,bIndex);
@@ -238,21 +320,7 @@ std::vector<Candidate> CandidateSetPQ::uncompressCandidate(CurveID bIndex, CPoin
     return result;
 }
 
-void CandidateSetPQ::showCovering(std::vector<Candidate> candidates) {
-#ifdef HASVISUAL
-    SparseFreeSpacesVisualizer fsv(sparsefreespaces);
-    fsv.showCandidates(std::move(candidates));
-#endif
-}
-
-void CandidateSetPQ::showFreespaces() {
-#ifdef HASVISUAL
-    SparseFreeSpacesVisualizer fsv(sparsefreespaces);
-    fsv.show();
-#endif
-}
-
-SparseFreeSpaces::SparseFreeSpaces(Curves &curves, double delta, int threadcount):Parent(curves.size()) {
+SparseFreeSpaces::SparseFreeSpaces(const Curves& curves, double delta, int threadcount) : Parent(curves.size()) {
     //Step1: figure out boundingboxes of curves
     std::vector<std::vector<int>> extremalIndices(curves.size());
 

@@ -190,7 +190,7 @@ public:
     std::vector<CPoint> upStarts, downStarts, upEnds, downEnds;
     const CurveID BID,TID;
     const distance_t delta;
-    SparseFreespace(Curve& B, Curve& T, distance_t _delta, int threadcount = 1, CurveID BID = -1, CurveID TID = -1);
+    SparseFreespace(const Curve& B, const Curve& T, distance_t _delta, int threadcount = 1, CurveID BID = -1, CurveID TID = -1);
     std::vector<SparseGridCell<std::unique_ptr<Cell>>>& row(PointID y){return operator[](y);}
     SparseGridCell<std::unique_ptr<Cell>>* cell(PointID y, PointID xidx){return &(operator[](y).operator[](xidx));}
     int xSize();
