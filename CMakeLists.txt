@@ -89,6 +89,3 @@ target_link_libraries(klcluster PUBLIC klcluster_lib)
 #	set(CMAKE_CXX_FLAGS "-lstdc++")
 #	add_executable(overhaul src/main.cpp src/geometry_types.h src/basic_types.h src/id.h src/geometry_types.cpp src/Curve.cpp src/Curve.h src/CurveSimplification.cpp src/CurveSimplification.h src/io.cpp src/io.h src/defs.h src/SparseFreespace.cpp src/SparseFreespace.h src/FreespaceVisualizer.cpp src/FreespaceVisualizer.h src/Candidate.cpp src/Candidate.h src/center_clustering_algs.cpp src/center_clustering_algs.h src/SWatch.h)
 #endif()
-
-
-add_subdirectory(scratch)
