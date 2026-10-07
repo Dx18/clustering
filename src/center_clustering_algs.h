@@ -67,17 +67,54 @@ private:
 
 class ClusteringResult : public std::vector<Cluster>{
 public:
-    template<std::ranges::input_range R>
-    requires(std::convertible_to<std::iter_reference_t<std::ranges::iterator_t<R>>, const CandidateBase&>)
-    explicit ClusteringResult(R&& candidates) {
-        for (const CandidateBase& c : candidates) {
+    template<typename C>
+    explicit ClusteringResult(const std::vector<Candidate<C>>& candidates, std::vector<double> uncoveredLengths) {
+        candidateCosts.resize(candidates.size());
+        candidateOptimisticCosts.resize(candidates.size());
+
+        for (const Candidate<C>& c : candidates) {
             CInterval center{c.getBegin(), c.getEnd(), c.getCurveIndex()};
             emplace_back(center, c.matching, c.visualMatching);
+
+            candidateCosts[c.roundOfUpdate] = c.getCost();
+            candidateOptimisticCosts[c.roundOfUpdate] = c.getOptimisticCost();
+
+            candidateRoundIDs.push_back(c.roundOfUpdate);
         }
+
+        prefixUncoveredLengths = std::move(uncoveredLengths);
     }
 
     Cluster const& get(PointID i) const { return operator[](i); }
-    int len(){return (*this).size();}
+    int len() const { return (*this).size(); }
+
+    const std::vector<int>& getCandidateRoundIDs() const {
+        return candidateRoundIDs;
+    }
+
+    const std::vector<double>& getCandidateCosts() const {
+        return candidateCosts;
+    }
+
+    const std::vector<double>& getCandidateOptimisticCosts() const {
+        return candidateOptimisticCosts;
+    }
+
+    const std::vector<double>& getPrefixUncoveredLengths() const {
+        return prefixUncoveredLengths;
+    }
+
+private:
+    // In the order of clusters
+
+    std::vector<int> candidateRoundIDs;
+
+    // In the order of round IDs
+
+    std::vector<double> candidateCosts;
+    std::vector<double> candidateOptimisticCosts;
+
+    std::vector<double> prefixUncoveredLengths;
 };
 
 Curves greedyCoverAlreadySimplified(Curves &curves, double delta, int l, int max_rounds = 10, bool show = false);
@@ -530,15 +567,12 @@ public:
     ClusteringResult greedyCover(int l, int rounds, func filter, const C::InitContext& costInitContext, bool withShow = false, long long* size = nullptr) {
         assert(not simplifiedCurves.empty());
 
-        std::vector<Candidate<C>> bestResultVisualizer;
         CandidateSetPQ<C> cs(simplifiedCurves, freespaceDelta);
         if (withShow) {
             SparseFreeSpacesVisualizer sfsv(cs.sparsefreespaces);
             sfsv.show();
         }
         cs.ultrafastComputeSmall(l, filter, costInitContext);
-
-        typename C::UpdateContext costUpdateContext(costInitContext);
 
         if (size != nullptr) {
             *size = 0;
@@ -547,8 +581,14 @@ public:
                 cs.pop();
             }
             //*size = (int)(cs.size());
-            return ClusteringResult(bestResultVisualizer);
+
+            std::vector<Candidate<C>> result;
+            return ClusteringResult(result, {lengthOfUncovered(simplifiedCurves, result)});
         }
+
+        typename C::UpdateContext costUpdateContext(costInitContext);
+
+        std::vector<Candidate<C>> bestResultVisualizer;
 
         for (int r = 0; r < rounds; ++r) {
             bool lastRound = r==rounds-1;
@@ -570,16 +610,15 @@ public:
                 std::cout << "current coordinate: {" << pcur.first << " ,{" << pcur.second.getPoint() << "," << pcur.second.getFraction() << std::endl;
 
                 //first verify that we need to find another center, otherwise output solution
-                if (lastInternalRound ||
-                    lengthOfUncovered(simplifiedCurves, result) <= EPSILON) {
-                    tryRefineSolution(result);
+                if (lastInternalRound || lengthOfUncovered(simplifiedCurves, result) <= EPSILON) {
+                    // TODO Return refinement
+                    // tryRefineSolution(result);
 
                     //std::sort(result.begin(), result.end(), [](auto& a, auto& b){return a.second.importance > b.second.importance;});
 
                     updateBestSolution(bestResultVisualizer, result);
 
                     break;
-
                 }
 
                 //update top, until the roundID matches
@@ -653,6 +692,13 @@ public:
                 cs.reset();
             }
         }
+
+        std::vector<double> prefixUncoveredLengths;
+
+        for (int i = 0; i <= bestResultVisualizer.size(); i++) {
+            prefixUncoveredLengths.push_back(lengthOfUncovered(simplifiedCurves, std::span(bestResultVisualizer.begin(), i)));
+        }
+
         std::cout << "Done";
         if (withSort) {
             std::sort(bestResultVisualizer.begin(), bestResultVisualizer.end(),
@@ -674,7 +720,7 @@ public:
             fsv.showCandidates(std::move(candidates));
 #endif
         }
-        ClusteringResult cr(bestResultVisualizer);
+        ClusteringResult cr(bestResultVisualizer, std::move(prefixUncoveredLengths));
         std::cout << "."<<std::endl;
 
         sparseFreespaces = std::make_unique<SparseFreeSpaces>(std::move(cs.sparsefreespaces));

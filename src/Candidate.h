@@ -30,6 +30,7 @@ concept CandidateCost = std::constructible_from<typename C::UpdateContext, const
     cost.reset();
 
     { static_cast<const C&>(cost).getCost() } -> std::convertible_to<double>;
+    { static_cast<const C&>(cost).getOptimisticCost() } -> std::convertible_to<double>;
 };
 
 class ArcLengthCandidateCost {
@@ -59,6 +60,7 @@ public:
     void reset();
 
     distance_t getCost() const;
+    distance_t getOptimisticCost() const;
 };
 
 static_assert(CandidateCost<ArcLengthCandidateCost>);

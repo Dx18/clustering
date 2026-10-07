@@ -26,6 +26,15 @@ private:
 
 PYBIND11_DECLARE_HOLDER_TYPE(T, Ptr<T>, true);
 
+namespace {
+
+template<typename T>
+py::array_t<T> as_pyarray(std::span<const T> data) {
+    return py::array_t<T>(data.size(), data.data(), py::none());
+}
+
+}
+
 PYBIND11_MODULE(klcluster, m){
     m.def("TRIVIALFILTER",trivialFilter);
 
@@ -161,7 +170,19 @@ PYBIND11_MODULE(klcluster, m){
             .def("__len__", [](const ClusteringResult& c) { return c.size(); })
         //     .def_property_readonly("__len__",&ClusteringResult::size)
             .def("__iter__",[](ClusteringResult &c){return py::make_iterator(c.begin(),c.end());},py::keep_alive<0,1>())
-            .def("__getitem__", &ClusteringResult::get, py::return_value_policy::reference);
+            .def("__getitem__", &ClusteringResult::get, py::return_value_policy::reference)
+            .def("getCandidateRoundIDs", [](const ClusteringResult& c) {
+                return as_pyarray(std::span(c.getCandidateRoundIDs()));
+            }, py::return_value_policy::reference_internal)
+            .def("getCandidateCosts", [](const ClusteringResult& c) {
+                return as_pyarray(std::span(c.getCandidateCosts()));
+            }, py::return_value_policy::reference_internal)
+            .def("getCandidateOptimisticCosts", [](const ClusteringResult& c) {
+                return as_pyarray(std::span(c.getCandidateOptimisticCosts()));
+            }, py::return_value_policy::reference_internal)
+            .def("getPrefixUncoveredLengths", [](const ClusteringResult& c) {
+                return as_pyarray(std::span(c.getPrefixUncoveredLengths()));
+            }, py::return_value_policy::reference_internal);
 
     py::class_<FrameLabeling>(m,"GroundTruth")
             .def(py::init<>())

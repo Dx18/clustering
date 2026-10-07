@@ -95,6 +95,10 @@ distance_t ArcLengthCandidateCost::getCost() const {
     return semiUpdatedCoverLength;
 }
 
+distance_t ArcLengthCandidateCost::getOptimisticCost() const {
+    return optimisticCoverLength;
+}
+
 CPoints propagateUpAndIntersect(SparseFreespace& sfs, int y, int x, distance_t startheight, const CPoints& ends, CurveID tIndex, int threadID=0){
     SparseGridCell<std::unique_ptr<Cell>>* startcell = sfs.cell(y,x);
 
